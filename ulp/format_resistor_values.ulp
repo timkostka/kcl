@@ -1,20 +1,14 @@
 // This ULP will format all resistor values within a schematic to a standard
 // format.  Optionally, it will also change values to the closest value within
-// the EIA E12 (10%), E24 (5%), or E96 (1%) standard values.
+// the EIA E12 (10%), EIA E24 (5%), EIA E48 (2%), or E96 (1%) standard values.
 //
-// Formats recognized are:
-// 2K2 = 2.2K = 2.2 kohm = 2200R = 2200 ohm
-//
-// Standardized formats are:
-// 2K2 or 2.2 K or 2.2K
+// Author: Tim Kostka <kostka@gmail.com>
+// Created: January 18, 2018
 //
 // Resistors are recognized as having a reference designator RXXX where XXX is
 // any positive integer and where the resistor has a recognized value.  For
 // example, R1 with a value of 2K2 would be recognized but R2 with a value of
 // DNI would not be recognized or changed.
-//
-// This ULP will attempt to find default settings that match the given
-// schematic.
 
 // print an error message and exit
 void error_out(string message) {
@@ -280,13 +274,6 @@ real read_value(string value) {
     */
 }
 
-/*output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
-read_value("0.01");
-read_value("0.0111111111111111111");
-read_value("380");
-}*/
-//exit(1);
-
 // return the given resistor value in the selected format
 string format_value(real value) {
     string formatted_value;
@@ -350,9 +337,10 @@ string format_value(real value) {
     }
     // double check that what we put out we parse to the input value
     real check_value = read_value(formatted_value);
-    real error = (value == 0.0) ? check_value : abs(check_value / value - 1.0);
+    real error = (value == 0) ? check_value : abs(check_value / value - 1.0);
     if (error > 1e-12) {
-        string message = "Formatted value does not match input.";
+        string message = "Formatted value does not match input.  To\n"
+                         "avoid making an error, no values will be changed.";
         sprintf(message, "%s\n\nInput: %.17g", message, value);
         sprintf(message, "%s\nOutput: \"%s\"", message, formatted_value);
         sprintf(message, "%s\nParsed output: %.17g", message, check_value);
@@ -363,7 +351,9 @@ string format_value(real value) {
         formatted_value = strlwr(formatted_value);
     }
     // suppress leading zero if desired
-    if (value != 0.0 && no_leading_zeroes && strsub(formatted_value, 0, 2) == "0.") {
+    if (value != 0.0 &&
+            no_leading_zeroes &&
+            strsub(formatted_value, 0, 2) == "0.") {
         formatted_value = strsub(formatted_value, 1);
     }
     return formatted_value;
@@ -390,15 +380,7 @@ void change_to_sheet(int i) {
     current_sheet = i;
 }
 
-// for getting default settings:
-// (DONE) get uppercase/lowercase setting (use_lowercase_letters)
-// (DONE) get leading zeroes
-// (DONE) get suppress r when possible (suppress_ones_multiplier)
-// (DONE) get resistor series (resistor_series_selection)
-// (DONE) get resistor format (resistor_value_format_selection)
-// (DONE) get trailing zeros
-
-// find settings values that match labels that already exist in the schematic
+// find setting values that match labels that already exist in the schematic
 void find_best_settings_match() {
     // find value for use_lowercase_letters
     int uppercase_matches = 0;
@@ -424,7 +406,7 @@ void find_best_settings_match() {
     } else if (lowercase_matches > uppercase_matches) {
         use_lowercase_letters = 1;
     }
-    printf("Found %d uppercase and %d lowercase matches.\n", uppercase_matches, lowercase_matches);
+    //printf("Found %d uppercase and %d lowercase matches.\n", uppercase_matches, lowercase_matches);
     // find value for no_leading_zeroes
     int suppressed_leading_zeros = 0;
     int unsuppressed_leading_zeros = 0;
@@ -452,7 +434,7 @@ void find_best_settings_match() {
     } else if (unsuppressed_leading_zeros > suppressed_leading_zeros) {
         no_leading_zeroes = 0;
     }
-    printf("Found %d suppressed and %d unsuppressed leading zeroes.\n", suppressed_leading_zeros, unsuppressed_leading_zeros);
+    //printf("Found %d suppressed and %d unsuppressed leading zeroes.\n", suppressed_leading_zeros, unsuppressed_leading_zeros);
     // find value for suppress_ones_multiplier
     int suppress_ones_multiplier_count = 0;
     int unsuppress_ones_multiplier_count = 0;
@@ -470,10 +452,10 @@ void find_best_settings_match() {
                 value = strsub(value, 1);
             }
             if (strlen(value) == 0) {
-                printf("suppressed R: %s\n", PART.value);
+                //printf("suppressed R: %s\n", PART.value);
                 ++suppress_ones_multiplier_count;
             } else if (value[0] == 'R') {
-                printf("unsuppressed R: %s\n", PART.value);
+                //printf("unsuppressed R: %s\n", PART.value);
                 ++unsuppress_ones_multiplier_count;
             }
         }
@@ -484,7 +466,7 @@ void find_best_settings_match() {
     if (unsuppress_ones_multiplier_count > suppress_ones_multiplier_count) {
         suppress_ones_multiplier = 0;
     }
-    printf("Found %d suppressed and %d unsuppressed Rs.\n", suppress_ones_multiplier_count, unsuppress_ones_multiplier_count);
+    //printf("Found %d suppressed and %d unsuppressed Rs.\n", suppress_ones_multiplier_count, unsuppress_ones_multiplier_count);
     // find value for resistor_series_selection
     // (choose the most tolerant series that has the most matches)
     int default_series = resistor_series_selection;
@@ -507,7 +489,7 @@ void find_best_settings_match() {
                 }
             }
         }
-        printf("Found %d matches to resistor series %d.\n", matches, resistor_series_selection);
+        //printf("Found %d matches to resistor series %d.\n", matches, resistor_series_selection);
         if (matches > best_matches) {
             default_series = resistor_series_selection;
             best_matches = matches;
@@ -535,7 +517,7 @@ void find_best_settings_match() {
                 }
             }
         }
-        printf("Found %d matches to value format series %d.\n", matches, resistor_value_format_selection);
+        //printf("Found %d matches to value format series %d.\n", matches, resistor_value_format_selection);
         if (matches > best_matches) {
             default_format = resistor_value_format_selection;
             best_matches = matches;
@@ -566,7 +548,7 @@ void find_best_settings_match() {
             }
         }
     }
-    printf("Found %d matches with trailing zeroes and %d without.\n", matches_with_zeroes, matches_without_zeroes);
+    //printf("Found %d matches with trailing zeroes and %d without.\n", matches_with_zeroes, matches_without_zeroes);
     no_trailing_zeroes = no_trailing_zeroes_default;
     if (matches_with_zeroes > matches_without_zeroes) {
         no_trailing_zeroes = 0;
@@ -577,10 +559,9 @@ void find_best_settings_match() {
 }
 
 // change options to match values already in schematic
-output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
-    find_best_settings_match();
-}
-//exit(1);
+//output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
+find_best_settings_match();
+//}
 
 // example label values
 string example_values[] = {"0", "0.1", "2200", "1000000"};
@@ -696,48 +677,52 @@ int changed_resistor_count = 0;
 // count number of changed resistor value labels
 int formatted_resistor_count = 0;
     
-output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
-    printf("\n---\n\n");
-    schematic(SCHEMATIC) {
-        SCHEMATIC.sheets(SHEET) {
-            SHEET.parts(PART) {
-                if (is_resistor_name(PART.name)) {
-                    ++resistor_count;
-                    real value = read_value(PART.value);
-                    if (value != -1.0) {
-                        ++valid_resistor_count;
-                        real snapped_number_value = value;
-                        if (!no_value_changes && value != 0.0) {
-                            snapped_number_value = snapped_value(snapped_number_value);
-                        }
-                        if (value != snapped_number_value) {
-                            ++changed_resistor_count;
-                        }
-                        real error = (value == 0.0) ? 0.0 : snapped_number_value / value - 1.0;
-                        string formatted_snapped_value = format_value(snapped_number_value);
-                        if (PART.value != formatted_snapped_value) {
-                            ++formatted_resistor_count;
-                            change_to_sheet(SHEET.number);
-                            sprintf(new_command, "VALUE %s '%s';\n", PART.name, formatted_snapped_value);
-                            commands += new_command;
-                        }
+//output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
+//    printf("\n---\n\n");
+schematic(SCHEMATIC) {
+    SCHEMATIC.sheets(SHEET) {
+        SHEET.parts(PART) {
+            if (is_resistor_name(PART.name)) {
+                ++resistor_count;
+                real value = read_value(PART.value);
+                if (value != -1.0) {
+                    ++valid_resistor_count;
+                    real snapped_number_value = value;
+                    if (!no_value_changes && value != 0.0) {
+                        snapped_number_value = snapped_value(snapped_number_value);
+                    }
+                    if (value != snapped_number_value) {
+                        ++changed_resistor_count;
+                    }
+                    real error = (value == 0.0) ? 0.0 : snapped_number_value / value - 1.0;
+                    string formatted_snapped_value = format_value(snapped_number_value);
+                    if (PART.value != formatted_snapped_value) {
+                        ++formatted_resistor_count;
+                        change_to_sheet(SHEET.number);
+                        sprintf(new_command, "VALUE %s '%s';\n", PART.name, formatted_snapped_value);
+                        commands += new_command;
                     }
                 }
             }
         }
     }
-    change_to_sheet(previous_schematic_sheet);
-    printf("We found %d resistors.\n", resistor_count);
-    printf("We found %d resistors with recognized values.\n", valid_resistor_count);
-    printf("%s", commands);
 }
+
+// change back to the schematic sheet that was open before the ULP started
+change_to_sheet(previous_schematic_sheet);
+
+//printf("We found %d resistors.\n", resistor_count);
+//printf("We found %d resistors with recognized values.\n", valid_resistor_count);
+//printf("%s", commands);
+
+//}
 
 if (formatted_resistor_count == 0) {
     dlgMessageBox(";No resistors values need changed.");
     exit(0);
 }
 
-// output info about resistor count and such
+// output info about resistor count and what can be changed
 string message = ";";
 sprintf(message, "%sWe found and can change the following information.", message);
 sprintf(message, "%s\n\nTotal resistors: %d", message, resistor_count);
@@ -746,21 +731,33 @@ sprintf(message, "%s\nResistors that changed value: %d", message, changed_resist
 sprintf(message, "%s\nResistors that changed format: %d", message, formatted_resistor_count);
 sprintf(message, "%s\n\nPress OK to make these changes.", message);
 result = dlgMessageBox(message, "+&OK", "&See script", "-&Cancel");
+
 // if Cancel was pressed, just exit
 if (result == 2) {
     exit(1);
 }
-// if See script was pressed, show the script
+// if "See script" was pressed, show the script
 if (result == 1) {
     message = "Click \"Run script\" to run the following commands:\n\n";
     message += commands;
     while (message[strlen(message) - 1] == '\n') {
         message = strsub(message, 0, strlen(message) - 1);
     }
-    result = dlgMessageBox(message, "+&Run script", "-&Cancel");
+    // show the script
+    int result = dlgDialog("Command script") {
+        dlgLabel("Press \"Run script\" to run the following command script:");
+        dlgTextView(commands);
+        dlgLabel("");
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("+&Run script") {dlgAccept(0);};
+            dlgPushButton("-&Cancel") {dlgReject(1);};
+        }
+    };
     if (result == 1) {
         exit(1);
     }
 }
 
+// exit ULP and run the command script
 exit(commands);
