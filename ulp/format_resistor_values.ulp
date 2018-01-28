@@ -1,1 +1,766 @@
+// This ULP will format all resistor values within a schematic to a standard
+// format.  Optionally, it will also change values to the closest value within
+// the EIA E12 (10%), E24 (5%), or E96 (1%) standard values.
+//
+// Formats recognized are:
+// 2K2 = 2.2K = 2.2 kohm = 2200R = 2200 ohm
+//
+// Standardized formats are:
+// 2K2 or 2.2 K or 2.2K
+//
+// Resistors are recognized as having a reference designator RXXX where XXX is
+// any positive integer and where the resistor has a recognized value.  For
+// example, R1 with a value of 2K2 would be recognized but R2 with a value of
+// DNI would not be recognized or changed.
+//
+// This ULP will attempt to find default settings that match the given
+// schematic.
 
+// print an error message and exit
+void error_out(string message) {
+    message = ":We have encountered an error.\n\n" + message;
+    dlgMessageBox(message);
+    exit(1);
+}
+
+// this ULP can only be run from the schematic
+if (!schematic) {
+    error_out("This ULP must be run from the schematic.");
+}
+
+// values from 10 to 100 for the EIA E12 10% series
+real resistor_values_e12[] = {10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82,
+                              100, 0};
+
+// values from 10 to 100 for the EIA E24 5% series
+real resistor_values_e24[] = {10, 11, 12, 13, 15, 16, 18, 20, 22, 24, 27, 30,
+                              33, 36, 39, 43, 47, 51, 56, 62, 68, 75, 82, 91,
+                              100, 0};
+
+// values from 10 to 100 for the EIA E48 2% series
+real resistor_values_e48[] = {10.0, 10.5, 11.0, 11.5, 12.1, 12.7, 13.3, 14.0,
+                              14.7, 15.4, 16.2, 16.9, 17.8, 18.7, 19.6, 20.5,
+                              21.5, 22.6, 23.7, 24.9, 26.1, 27.4, 28.7, 30.1,
+                              31.6, 33.2, 34.8, 36.5, 38.3, 40.2, 42.2, 44.2,
+                              46.4, 48.7, 51.1, 53.6, 56.2, 59.0, 61.9, 64.9,
+                              68.1, 71.5, 75.0, 78.7, 82.5, 86.6, 90.9, 95.3,
+                              100.0, 0.0};
+
+// values from 10 to 100 for the EIA E96 1% series
+real resistor_values_e96[] = {10.0, 10.2, 10.5, 10.7, 11.0, 11.3, 11.5, 11.8,
+                              12.1, 12.4, 12.7, 13.0, 13.3, 13.7, 14.0, 14.3,
+                              14.7, 15.0, 15.4, 15.8, 16.2, 16.5, 16.9, 17.4,
+                              17.8, 18.2, 18.7, 19.1, 19.6, 20.0, 20.5, 21.0,
+                              21.5, 22.1, 22.6, 23.2, 23.7, 24.3, 24.9, 25.5,
+                              26.1, 26.7, 27.4, 28.0, 28.7, 29.4, 30.1, 30.9,
+                              31.6, 32.4, 33.2, 34.0, 34.8, 35.7, 36.5, 37.4,
+                              38.3, 39.2, 40.2, 41.2, 42.2, 43.2, 44.2, 45.3,
+                              46.4, 47.5, 48.7, 49.9, 51.1, 52.3, 53.6, 54.9,
+                              56.2, 57.6, 59.0, 60.4, 61.9, 63.4, 64.9, 66.5,
+                              68.1, 69.8, 71.5, 73.2, 75.0, 76.8, 78.7, 80.6,
+                              82.5, 84.5, 86.6, 88.7, 90.9, 93.1, 95.3, 97.6,
+                              100.0, 0.0};
+
+// hold commands to execute after script is done
+string commands;
+
+// hold new command to add
+string new_command;
+
+// format selection
+// 0 -> 2K2
+// 1 -> 2.2K
+// 2 -> 2.2 K
+int resistor_value_format_selection = 1;
+
+// number of formats
+int resistor_value_format_selection_count = 3;
+
+// series selection
+// 0 -> EIA E12 10%
+// 1 -> EIA E24 5%
+// 2 -> EIA E48 2%
+// 3 -> EIA E96 1%
+int resistor_series_selection = 1;
+
+// number of series
+int resistor_series_selection_count = 4;
+
+// number of significant figures to use for each series
+int resistor_series_signficant_figures[] = {2, 2, 3, 3};
+
+// if 1, suppress the "R" for values like "1 R"
+int suppress_ones_multiplier = 1;
+
+// if 0, add zeroes to get the needed number of significant figures
+int no_trailing_zeroes = 0;
+
+// if 0, suppress the 0 before a decimal point if it's the only digit
+int no_leading_zeroes = 0;
+
+// if 1, don't change any values, only formats
+int no_value_changes = 0;
+
+// if 1, use uppercase letters for the multiplier
+int use_lowercase_letters = 0;
+
+// return 1 if the given name is a resistor name and 0 otherwise
+int is_resistor_name(string name) {
+    // name should be at least 2 characters
+    if (strlen(name) < 2) {
+        return 0;
+    }
+    // first character should be 'r' or 'R'
+    if (name[0] != 'R' && name[0] != 'r') {
+        return 0;
+    }
+    // other chraracters should be numbers
+    for (int i = 1; i < strlen(name); ++i) {
+        if (!isdigit(name[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// return the standard value closest to the given value
+// closest is given by the metric abs(R_new / R_old - 1)
+real snapped_value(real value) {
+    // don't mess with nonpositive values
+    if (value <= 0.0) {
+        return value;
+    }
+    // find a multiple of 10 such that 10 * X <= value < 100 * X
+    real multiplier = 1.0;
+    while (10 * (multiplier * 10.0) <= value) {
+        multiplier *= 10.0;
+    }
+    while (value < 100 * (multiplier / 10.0)) {
+        multiplier /= 10.0;
+    }
+    // go through the list to find the closest one
+    real min_error = 100.0;
+    real best_value = value;
+    if (resistor_series_selection == 0) {
+        // E12
+        for (int i = 0; resistor_values_e12[i] != 0.0; ++i) {
+            real new_value = resistor_values_e12[i] * multiplier;
+            real error = abs(new_value / value - 1.0);
+            if (error < min_error) {
+                best_value = new_value;
+                min_error = error;
+            }
+        }
+    } else if (resistor_series_selection == 1) {
+        // E24
+        for (int i = 0; resistor_values_e24[i] != 0.0; ++i) {
+            real new_value = resistor_values_e24[i] * multiplier;
+            real error = abs(new_value / value - 1.0);
+            if (error < min_error) {
+                best_value = new_value;
+                min_error = error;
+            }
+        }
+    } else if (resistor_series_selection == 2) {
+        // E48
+        for (int i = 0; resistor_values_e48[i] != 0.0; ++i) {
+            real new_value = resistor_values_e48[i] * multiplier;
+            real error = abs(new_value / value - 1.0);
+            if (error < min_error) {
+                best_value = new_value;
+                min_error = error;
+            }
+        }
+    } else if (resistor_series_selection == 3) {
+        // E96
+        for (int i = 0; resistor_values_e96[i] != 0.0; ++i) {
+            real new_value = resistor_values_e96[i] * multiplier;
+            real error = abs(new_value / value - 1.0);
+            if (error < min_error) {
+                best_value = new_value;
+                min_error = error;
+            }
+        }
+    } else {
+        error_out("Unexpected value.");
+    }
+    return best_value;
+}
+
+// interpret and return the given resistor value in ohms
+// return -1.0 if not recognized
+real read_value(string value) {
+    // value to return if not recognized
+    real unrecognized_value = -1.0;
+    // multiple character
+    string multiplier_string = "RKM";
+    char multiplier_character[] = {'R', 'K', 'M'};
+    real multiplier_value[] = {1.0, 1000.0, 1000000.0};
+    real multiplier = -1.0;
+    // split by spaces into words
+    string words[];
+    strsplit(words, strupr(value), ' ');
+    int word_count = 0;
+    while (words[word_count] != "") {
+        ++word_count;
+    }
+    // if more than 2 words, it's not recognized
+    if (word_count > 2) {
+        return unrecognized_value;
+    }
+    // if two words, second word should be multiplier
+    if (word_count == 2) {
+        if (strlen(words[1]) != 1) {
+            return unrecognized_value;
+        }
+        int index = strchr(multiplier_string, words[1][0]);
+        if (index == -1) {
+            return unrecognized_value;
+        }
+        multiplier = multiplier_value[index];
+    }
+    // see if word 1 contains the multiplier
+    int word_one_contains_multiplier = 0;
+    int i;
+    for (i = 0; i < strlen(multiplier_string); ++i) {
+        int index = strchr(words[0], multiplier_string[i]);
+        if (index >= 0) {
+            if (multiplier != -1.0) {
+                return unrecognized_value;
+            }
+            word_one_contains_multiplier = 1;
+            multiplier = multiplier_value[i];
+            // if it's at the end, remove it
+            // else convert it to a decimal point
+            if (index == strlen(words[0]) - 1) {
+                words[0] = strsub(words[0], 0, index);
+            } else {
+                words[0][index] = '.';
+            }
+        }
+    }
+    // at this point, we either have a multiplier or we can set it to 1.0
+    if (multiplier == -1.0) {
+        multiplier = 1.0;
+    }
+    // make sure each character is a digit or a decimal point
+    // and count number of decimals present
+    int decimal_count = 0;
+    for (i = 0; i < strlen(words[0]); ++i) {
+        if (words[0][i] == '.') {
+            ++decimal_count;
+        } else if (!isdigit(words[0][i])) {
+            return unrecognized_value;
+        }
+    }
+    if (decimal_count > 1) {
+        return unrecognized_value;
+    }
+    // should have at least one number
+    if (strlen(words[0]) - decimal_count == 0) {
+        return unrecognized_value;
+    }
+    real new_value = strtod(words[0]) * multiplier;
+    //printf("Value in: \"%s\"\n", value);
+    //printf("Value out: %.17g\n", new_value);
+    return new_value;
+    // if a decimal point is present, remove it and find the divider factor
+    /*
+    real divider = 1.0;
+    int index = strchr(words[0], '.');
+    if (index != -1) {
+        for (i = index + 1; i < strlen(words[0]); ++i) {
+            words[0][i - 1] = words[0][i];
+            divider *= 10.0;
+        }
+        words[0] = strsub(words[0], 0, strlen(words[0]) - 1);
+    }
+    // it's valid, so return the value
+    return strtol(words[0]) * multiplier / divider;
+    */
+}
+
+/*output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
+read_value("0.01");
+read_value("0.0111111111111111111");
+read_value("380");
+}*/
+//exit(1);
+
+// return the given resistor value in the selected format
+string format_value(real value) {
+    string formatted_value;
+    int target_significant_figures = resistor_series_signficant_figures[resistor_series_selection];
+    if (value >= 1000000) {
+        sprintf(formatted_value, "%dM%06d", int(value / 1000000), int(value) % 1000000);
+    } else if (value >= 1000) {
+        sprintf(formatted_value, "%dK%03d", int(value / 1000), int(value) % 1000);
+    } else {
+        sprintf(formatted_value, "%dR%06d", int(value), int((value - int(value)) * 1000000.0));
+    }
+    // remove trailing zeroes
+    while (formatted_value[strlen(formatted_value) - 1] == '0') {
+        formatted_value = strsub(formatted_value, 0, strlen(formatted_value) - 1);
+    }
+    // find location of first significant figure
+    int i = 0;
+    while (i < strlen(formatted_value) && (formatted_value[i] == '0' || !isdigit(formatted_value[i]))) {
+        ++i;
+    }
+    // for zero, count the first 0 as a significant figure
+    if (value == 0.0) {
+        i = 0;
+    }
+    // count significant figures present
+    int significant_figures = 0;
+    while (i < strlen(formatted_value)) {
+        if (isdigit(formatted_value[i])) {
+            ++significant_figures;
+        }
+        ++i;
+    }
+    // add zeroes to get desired number of figures
+    if (!no_trailing_zeroes) {
+        while (significant_figures < target_significant_figures) {
+            formatted_value += "0";
+            ++significant_figures;
+        }
+    }
+    // find location of first and only alpha character
+    i = 0;
+    while (isdigit(formatted_value[i])) {
+        ++i;
+    }
+    char multiplier = formatted_value[i];
+    // format appropriately
+    if (resistor_value_format_selection > 0) {
+        if (i == strlen(formatted_value) - 1) {
+            formatted_value = strsub(formatted_value, 0, strlen(formatted_value) - 1);
+        } else {
+            formatted_value[i] = '.';
+        }
+    }
+    if (multiplier != 'R' || !suppress_ones_multiplier) {
+        if (resistor_value_format_selection == 1) {
+            formatted_value += multiplier;
+        } else if (resistor_value_format_selection == 2) {
+            formatted_value += ' ';
+            formatted_value += multiplier;
+        }
+    }
+    // double check that what we put out we parse to the input value
+    real check_value = read_value(formatted_value);
+    real error = (value == 0.0) ? check_value : abs(check_value / value - 1.0);
+    if (error > 1e-12) {
+        string message = "Formatted value does not match input.";
+        sprintf(message, "%s\n\nInput: %.17g", message, value);
+        sprintf(message, "%s\nOutput: \"%s\"", message, formatted_value);
+        sprintf(message, "%s\nParsed output: %.17g", message, check_value);
+        error_out(message);
+    }
+    // convert to lowercase if needed
+    if (use_lowercase_letters) {
+        formatted_value = strlwr(formatted_value);
+    }
+    // suppress leading zero if desired
+    if (value != 0.0 && no_leading_zeroes && strsub(formatted_value, 0, 2) == "0.") {
+        formatted_value = strsub(formatted_value, 1);
+    }
+    return formatted_value;
+}
+
+// the current schematic sheet before editing
+int previous_schematic_sheet = 0;
+if (sheet) {
+    sheet(S) {
+        previous_schematic_sheet = S.number;
+    }
+}
+
+// current schematic sheet
+int current_sheet = previous_schematic_sheet;
+
+// add a command to switch the current sheet if necessary
+void change_to_sheet(int i) {
+    if (i == current_sheet) {
+        return;
+    }
+    sprintf(new_command, "EDIT .S%d;\n", i);
+    commands += new_command;
+    current_sheet = i;
+}
+
+// for getting default settings:
+// (DONE) get uppercase/lowercase setting (use_lowercase_letters)
+// (DONE) get leading zeroes
+// (DONE) get suppress r when possible (suppress_ones_multiplier)
+// (DONE) get resistor series (resistor_series_selection)
+// (DONE) get resistor format (resistor_value_format_selection)
+// (DONE) get trailing zeros
+
+// find settings values that match labels that already exist in the schematic
+void find_best_settings_match() {
+    // find value for use_lowercase_letters
+    int uppercase_matches = 0;
+    int lowercase_matches = 0;
+    schematic(SCHEMATIC) {
+        SCHEMATIC.parts(PART) {
+            if (!is_resistor_name(PART.name)) {
+                continue;
+            }
+            if (read_value(PART.value) == -1.0) {
+                continue;
+            }
+            if (strupr(PART.value) == PART.value) {
+                ++uppercase_matches;
+            }
+            if (strlwr(PART.value) == PART.value) {
+                ++lowercase_matches;
+            }
+        }
+    }
+    if (uppercase_matches > lowercase_matches) {
+        use_lowercase_letters = 0;
+    } else if (lowercase_matches > uppercase_matches) {
+        use_lowercase_letters = 1;
+    }
+    printf("Found %d uppercase and %d lowercase matches.\n", uppercase_matches, lowercase_matches);
+    // find value for no_leading_zeroes
+    int suppressed_leading_zeros = 0;
+    int unsuppressed_leading_zeros = 0;
+    schematic(SCHEMATIC) {
+        SCHEMATIC.parts(PART) {
+            if (!is_resistor_name(PART.name)) {
+                continue;
+            }
+            if (read_value(PART.value) == -1.0) {
+                continue;
+            }
+            string value = PART.value;
+            if (strchr(value, '.') == -1) {
+                continue;
+            }
+            if (value[0] == '.') {
+                ++suppressed_leading_zeros;
+            } else if (value[0] == '0') {
+                ++unsuppressed_leading_zeros;
+            }
+        }
+    }
+    if (suppressed_leading_zeros > unsuppressed_leading_zeros) {
+        no_leading_zeroes = 1;
+    } else if (unsuppressed_leading_zeros > suppressed_leading_zeros) {
+        no_leading_zeroes = 0;
+    }
+    printf("Found %d suppressed and %d unsuppressed leading zeroes.\n", suppressed_leading_zeros, unsuppressed_leading_zeros);
+    // find value for suppress_ones_multiplier
+    int suppress_ones_multiplier_count = 0;
+    int unsuppress_ones_multiplier_count = 0;
+    schematic(SCHEMATIC) {
+        SCHEMATIC.parts(PART) {
+            if (!is_resistor_name(PART.name)) {
+                continue;
+            }
+            if (read_value(PART.value) == -1.0) {
+                continue;
+            }
+            // remove all non-alpha digits
+            string value = strupr(PART.value);
+            while (strlen(value) > 0 && !isalpha(value[0])) {
+                value = strsub(value, 1);
+            }
+            if (strlen(value) == 0) {
+                printf("suppressed R: %s\n", PART.value);
+                ++suppress_ones_multiplier_count;
+            } else if (value[0] == 'R') {
+                printf("unsuppressed R: %s\n", PART.value);
+                ++unsuppress_ones_multiplier_count;
+            }
+        }
+    }
+    if (suppress_ones_multiplier_count > unsuppress_ones_multiplier_count) {
+        suppress_ones_multiplier = 1;
+    }
+    if (unsuppress_ones_multiplier_count > suppress_ones_multiplier_count) {
+        suppress_ones_multiplier = 0;
+    }
+    printf("Found %d suppressed and %d unsuppressed Rs.\n", suppress_ones_multiplier_count, unsuppress_ones_multiplier_count);
+    // find value for resistor_series_selection
+    // (choose the most tolerant series that has the most matches)
+    int default_series = resistor_series_selection;
+    int best_matches = 0;
+    for (resistor_series_selection = 0;
+            resistor_series_selection < resistor_series_selection_count;
+            ++resistor_series_selection) {
+        int matches = 0;
+        schematic(SCHEMATIC) {
+            SCHEMATIC.parts(PART) {
+                if (!is_resistor_name(PART.name)) {
+                    continue;
+                }
+                real value = read_value(PART.value);
+                if (value == -1.0) {
+                    continue;
+                }
+                if (snapped_value(value) == value) {
+                    ++matches;
+                }
+            }
+        }
+        printf("Found %d matches to resistor series %d.\n", matches, resistor_series_selection);
+        if (matches > best_matches) {
+            default_series = resistor_series_selection;
+            best_matches = matches;
+        }
+    }
+    resistor_series_selection = default_series;
+    // find value for resistor_value_format_selection
+    int default_format = resistor_value_format_selection;
+    best_matches = 0;
+    for (resistor_value_format_selection = 0;
+            resistor_value_format_selection < resistor_value_format_selection_count;
+            ++resistor_value_format_selection) {
+        int matches = 0;
+        schematic(SCHEMATIC) {
+            SCHEMATIC.parts(PART) {
+                if (!is_resistor_name(PART.name)) {
+                    continue;
+                }
+                real value = read_value(PART.value);
+                if (value == -1.0) {
+                    continue;
+                }
+                if (format_value(value) == PART.value) {
+                    ++matches;
+                }
+            }
+        }
+        printf("Found %d matches to value format series %d.\n", matches, resistor_value_format_selection);
+        if (matches > best_matches) {
+            default_format = resistor_value_format_selection;
+            best_matches = matches;
+        }
+    }
+    resistor_value_format_selection = default_format;
+    // find value for no_trailing_zeroes
+    no_trailing_zeroes = 1;
+    int no_trailing_zeroes_default = no_trailing_zeroes;
+    int matches_with_zeroes = 0;
+    int matches_without_zeroes = 0;
+    schematic(SCHEMATIC) {
+        SCHEMATIC.parts(PART) {
+            if (!is_resistor_name(PART.name)) {
+                continue;
+            }
+            real value = read_value(PART.value);
+            if (value == -1.0) {
+                continue;
+            }
+            no_trailing_zeroes = 1;
+            if (format_value(value) == PART.value) {
+                ++matches_without_zeroes;
+            }
+            no_trailing_zeroes = 0;
+            if (format_value(value) == PART.value) {
+                ++matches_with_zeroes;
+            }
+        }
+    }
+    printf("Found %d matches with trailing zeroes and %d without.\n", matches_with_zeroes, matches_without_zeroes);
+    no_trailing_zeroes = no_trailing_zeroes_default;
+    if (matches_with_zeroes > matches_without_zeroes) {
+        no_trailing_zeroes = 0;
+    }
+    if (matches_without_zeroes > matches_with_zeroes) {
+        no_trailing_zeroes = 1;
+    }
+}
+
+// change options to match values already in schematic
+output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
+    find_best_settings_match();
+}
+//exit(1);
+
+// example label values
+string example_values[] = {"0", "0.1", "2200", "1000000"};
+string example_labels[] = {"", "", "", ""};
+int example_count = 4;
+
+// update example labels based on the current settings
+void update_example_labels(void) {
+    for (int i = 0; i < example_count; ++i) {
+        example_labels[i] = format_value(strtod(example_values[i]));
+    }
+}
+
+// update example labels
+update_example_labels();
+
+// pop up the options dialog
+int result = dlgDialog("Format Resistor Values: Options") {
+    dlgHBoxLayout {
+        dlgStretch(1);
+        dlgLabel("Change options to the desired values.  The format\nexamples will update as new options are chosen.");
+        dlgStretch(1);
+    }
+    dlgLabel("");
+    dlgHBoxLayout {
+        dlgVBoxLayout {
+            dlgGroup("Resistor value format") {
+                dlgRadioButton("2200 ohm -> 2K2", resistor_value_format_selection) update_example_labels();
+                dlgRadioButton("2200 ohm -> 2.2K", resistor_value_format_selection) update_example_labels();
+                dlgRadioButton("2200 ohm -> 2.2 K", resistor_value_format_selection) update_example_labels();
+            }
+            dlgGroup("Leading zeroes") {
+                dlgRadioButton("Include (e.g. \"0.1\")", no_leading_zeroes) update_example_labels();
+                dlgRadioButton("Don't include (e.g. \".1\")", no_leading_zeroes) update_example_labels();
+            }
+            dlgGroup("Trailing zeroes") {
+                dlgRadioButton("Based on significant figures", no_trailing_zeroes) update_example_labels();
+                dlgRadioButton("No trailing zeros", no_trailing_zeroes) update_example_labels();
+            }
+            dlgGroup("Thousands format") {
+                dlgRadioButton("Uppercase (e.g. M, K, R)", use_lowercase_letters) update_example_labels();
+                dlgRadioButton("Lowercase (e.g. m, k, r)", use_lowercase_letters) update_example_labels();
+                dlgCheckBox("Suppress \"R\" when possible", suppress_ones_multiplier) update_example_labels();
+            }
+            dlgStretch(1);
+        }
+        dlgLabel(" ");
+        dlgVBoxLayout {
+            dlgGroup("Resistor series") {
+                dlgRadioButton("EIA E12 (10%)", resistor_series_selection) update_example_labels();
+                dlgRadioButton("EIA E24 (5%)", resistor_series_selection) update_example_labels();
+                dlgRadioButton("EIA E48 (2%)", resistor_series_selection) update_example_labels();
+                dlgRadioButton("EIA E96 (1%)", resistor_series_selection) update_example_labels();
+                dlgCheckBox("No changes", no_value_changes) update_example_labels();
+            }
+            dlgGroup("Format examples") {
+                dlgHBoxLayout {
+                    dlgStretch(1);
+                    dlgLabel(example_values[0]);
+                    dlgLabel("-->");
+                    dlgLabel(example_labels[0], 1);
+                    dlgStretch(1);
+                }
+                dlgHBoxLayout {
+                    dlgStretch(1);
+                    dlgLabel(example_values[1]);
+                    dlgLabel("-->");
+                    dlgLabel(example_labels[1], 1);
+                    dlgStretch(1);
+                }
+                dlgHBoxLayout {
+                    dlgStretch(1);
+                    dlgLabel(example_values[2]);
+                    dlgLabel("-->");
+                    dlgLabel(example_labels[2], 1);
+                    dlgStretch(1);
+                }
+                dlgHBoxLayout {
+                    dlgStretch(1);
+                    dlgLabel(example_values[3]);
+                    dlgLabel("-->");
+                    dlgLabel(example_labels[3], 1);
+                    dlgStretch(1);
+                }
+            }
+            dlgStretch(1);
+        }
+        dlgStretch(1);
+    }
+    dlgLabel("");
+    dlgStretch(1);
+    dlgHBoxLayout {
+        dlgStretch(1);
+        dlgPushButton("+&OK") {dlgAccept(0);};
+        dlgPushButton("-&Cancel") {dlgReject(1);};
+    }
+};
+
+// if Cancel was pressed, just exit
+if (result == 1) {
+    exit(1);
+}
+
+// count number of resistors
+int resistor_count = 0;
+
+// count number of resistors we can possible change
+int valid_resistor_count = 0;
+
+// count number of changed resistor values
+int changed_resistor_count = 0;
+
+// count number of changed resistor value labels
+int formatted_resistor_count = 0;
+    
+output("C:/Users/tdkostk/Documents/temp/eagle_ulp_output.txt", "at") {
+    printf("\n---\n\n");
+    schematic(SCHEMATIC) {
+        SCHEMATIC.sheets(SHEET) {
+            SHEET.parts(PART) {
+                if (is_resistor_name(PART.name)) {
+                    ++resistor_count;
+                    real value = read_value(PART.value);
+                    if (value != -1.0) {
+                        ++valid_resistor_count;
+                        real snapped_number_value = value;
+                        if (!no_value_changes && value != 0.0) {
+                            snapped_number_value = snapped_value(snapped_number_value);
+                        }
+                        if (value != snapped_number_value) {
+                            ++changed_resistor_count;
+                        }
+                        real error = (value == 0.0) ? 0.0 : snapped_number_value / value - 1.0;
+                        string formatted_snapped_value = format_value(snapped_number_value);
+                        if (PART.value != formatted_snapped_value) {
+                            ++formatted_resistor_count;
+                            change_to_sheet(SHEET.number);
+                            sprintf(new_command, "VALUE %s '%s';\n", PART.name, formatted_snapped_value);
+                            commands += new_command;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    change_to_sheet(previous_schematic_sheet);
+    printf("We found %d resistors.\n", resistor_count);
+    printf("We found %d resistors with recognized values.\n", valid_resistor_count);
+    printf("%s", commands);
+}
+
+if (formatted_resistor_count == 0) {
+    dlgMessageBox(";No resistors values need changed.");
+    exit(0);
+}
+
+// output info about resistor count and such
+string message = ";";
+sprintf(message, "%sWe found and can change the following information.", message);
+sprintf(message, "%s\n\nTotal resistors: %d", message, resistor_count);
+sprintf(message, "%s\nResistors with recognized values: %d", message, valid_resistor_count);
+sprintf(message, "%s\nResistors that changed value: %d", message, changed_resistor_count);
+sprintf(message, "%s\nResistors that changed format: %d", message, formatted_resistor_count);
+sprintf(message, "%s\n\nPress OK to make these changes.", message);
+result = dlgMessageBox(message, "+&OK", "&See script", "-&Cancel");
+// if Cancel was pressed, just exit
+if (result == 2) {
+    exit(1);
+}
+// if See script was pressed, show the script
+if (result == 1) {
+    message = "Click \"Run script\" to run the following commands:\n\n";
+    message += commands;
+    while (message[strlen(message) - 1] == '\n') {
+        message = strsub(message, 0, strlen(message) - 1);
+    }
+    result = dlgMessageBox(message, "+&Run script", "-&Cancel");
+    if (result == 1) {
+        exit(1);
+    }
+}
+
+exit(commands);
