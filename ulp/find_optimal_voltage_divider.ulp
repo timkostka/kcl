@@ -12,19 +12,15 @@ void error_out(string message) {
 }
 
 // voltage on the top rail
-real top_rail = 3.3;
+real top_rail = 16.8;
 
 // target voltage on the middle rail
-real mid_rail = 1.5;
+real mid_rail = 3.0;
 
 // voltage at the bottom rail (usually 0 for ground)
 real bottom_rail = 0.0;
 
 // target impedance
-//real impedance = 10000;
-
-// impedance
-//string impedance_label = "100K";
 string target_impedance_label = "100K";
 
 // the relative weight of the impedance vs the ratio when calculating errors
@@ -41,7 +37,7 @@ int target_impedance_selection = 0;
 real resistor_series_tolerances[] = {0.0, 0.10, 0.05, 0.02, 0.01};
 
 // resistor series selections
-int resistor_series_selection = 0;
+int resistor_series_selection = 2;
 
 // If 1, will include all E24 values in higher level series.  Note that E24 is
 // not a subset of the higher level series.
@@ -63,20 +59,11 @@ real custom_tolerance = 5;
 string schematic_label = "<img src=find_optimal_voltage_divider.png>";
 
 string results_target_impedance_label = "";
-//
 string results_r1_label = "";
-//real r1 = 100000.0;
 string results_r2_label = "";
-//real r2 = 50000.0;
-//real ratio = 0.0;
 string results_ratio_label = "";
 string results_impedance_1_label = "";
-//real impedance_1 = 50000.0;
-//string impedance_1_error_label = "(0% error)";
 string results_impedance_2_label = "";
-//real impedance_2 = 50000.0;
-//string impedance_2_error_label = "";
-//real current = 1.0;
 string results_current_label = "40 mA";
 string results_target_ratio_label = "";
 string results_mid_voltage_label = "";
@@ -503,15 +490,15 @@ void calculate() {
                 mid_voltage_high);
     }
     results_mid_voltage_label += " V";
-    if (resistor_series_selection != 0) {
-        error = mid_voltage - mid_rail;
+    if (resistor_series_selection != 0 && mid_rail != 0.0) {
+        error = mid_voltage / mid_rail - 1.0;
         sprintf(results_mid_voltage_label,
                 "%s\nError = %.2f%%",
                 results_mid_voltage_label,
                 error * 100.0);
         if (tolerance != 0.0) {
-            error_low = mid_voltage_low - mid_rail;
-            error_high = mid_voltage_high - mid_rail;
+            error_low = mid_voltage_low / mid_rail - 1.0;
+            error_high = mid_voltage_high / mid_rail - 1.0;
             sprintf(results_mid_voltage_label,
                     "%s [%.2f%% to %.2f%%]",
                     results_mid_voltage_label,
@@ -671,7 +658,7 @@ int result = dlgDialog("Find voltage divider resistors") {
             }
             dlgHBoxLayout{
                 dlgStretch(1);
-                dlgPushButton("   Perform calculation   ") {calculate();};
+                dlgPushButton("+   Perform calculation   ") {calculate();};
                 dlgStretch(1);
             }
             dlgStretch(1);
