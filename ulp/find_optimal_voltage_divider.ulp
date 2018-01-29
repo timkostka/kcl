@@ -2,7 +2,7 @@
 // voltage divider characteristics.
 //
 // Author: Tim Kostka <kostka@gmail.com>
-// Created: January 18, 2018
+// Created: January 28, 2018
 
 // print an error message and exit
 void error_out(string message) {
@@ -11,36 +11,75 @@ void error_out(string message) {
     exit(1);
 }
 
+// voltage on the top rail
 real top_rail = 3.3;
+
+// target voltage on the middle rail
 real mid_rail = 1.5;
+
+// voltage at the bottom rail (usually 0 for ground)
 real bottom_rail = 0.0;
-real impedance = 10000;
-string impedance_label = "100K";
-real impedance_importance = 0.1;
 
-int impedance_selection = 0;
+// target impedance
+//real impedance = 10000;
 
+// impedance
+//string impedance_label = "100K";
+string target_impedance_label = "100K";
+
+// the relative weight of the impedance vs the ratio when calculating errors
+//real impedance_importance = 0.1;
+real target_impedance_importance = 0.1;
+
+// impedance selection option
+// 0 = R1 + R2
+// 1 = 1/(1/R1+1/R2)
+//int impedance_selection = 0;
+int target_impedance_selection = 0;
+
+// the default tolerance for each resistor series
 real resistor_series_tolerances[] = {0.0, 0.10, 0.05, 0.02, 0.01};
+
+// resistor series selections
 int resistor_series_selection = 0;
 
-string r1_label = "100K";
-real r1 = 100000.0;
-string r2_label = "50K";
-real r2 = 50000.0;
-real ratio = 0.0;
-string ratio_label = "0.123";
-string ratio_error_label = "(1.1% error)";
-string impedance_1_label = "2.2K";
-real impedance_1 = 50000.0;
-string impedance_1_error_label = "(0% error)";
-string impedance_2_label = "2.2K";
-real impedance_2 = 50000.0;
-string impedance_2_error_label = "";
-real current = 1.0;
-string current_label = "40 mA";
-string target_ratio_label = "";
-string target_impedance_label = "";
-string mid_voltage_label = "";
+// If 1, will include all E24 values in higher level series.  Note that E24 is
+// not a subset of the higher level series.
+int include_e24_values = 1;
+
+// tolerance values for each selection
+real tolerance_values[] = {0.0, 0.10, 0.05, 0.02, 0.01};
+
+// tolerance selection
+int tolerance_selection = 0;
+
+// if 1, use the custom tolerance value
+int custom_tolerance_selection = 0;
+
+// custom tolerance value in %
+real custom_tolerance = 5;
+
+// schematic picture
+string schematic_label = "<img src=find_optimal_voltage_divider.png>";
+
+string results_target_impedance_label = "";
+//
+string results_r1_label = "";
+//real r1 = 100000.0;
+string results_r2_label = "";
+//real r2 = 50000.0;
+//real ratio = 0.0;
+string results_ratio_label = "";
+string results_impedance_1_label = "";
+//real impedance_1 = 50000.0;
+//string impedance_1_error_label = "(0% error)";
+string results_impedance_2_label = "";
+//real impedance_2 = 50000.0;
+//string impedance_2_error_label = "";
+//real current = 1.0;
+string results_current_label = "40 mA";
+string results_target_ratio_label = "";
+string results_mid_voltage_label = "";
 
 // read a string resistance value and return the resistance in ohms
 // return -1 if not recognized
@@ -202,6 +241,22 @@ void populate_resistor_values() {
             error_out("Unexpected value");
         }
     }
+    // if selected, add E24 values to the list
+    if (include_e24_values && resistor_series_selection > 2) {
+        int j = 0;
+        for (int i = 0; resistor_values_e24[i] != 0.0; ++i) {
+            real new_value = resistor_values_e24[i];
+            while (resistor_values[j] < new_value && resistor_values[j] != 0) {
+                ++j;
+            }
+            if (resistor_values[j] != new_value) {
+                for (real multiplier = 0.1; multiplier <= 10000; multiplier *= 10.0) {
+                    resistor_values[index] = new_value * multiplier;
+                    ++index;
+                }
+            }
+        }
+    }
     // add the 1M resistor
     resistor_values[index] = 1000000.0;
     ++index;
@@ -315,7 +370,15 @@ string format_current(real current) {
 
 // report the given error and set labels to NA values
 void report_input_error(string message) {
-    target_ratio_label = message;
+    results_r1_label = message;
+    results_r2_label = message;
+    results_target_impedance_label = message;
+    results_ratio_label = message;
+    results_mid_voltage_label = message;
+    results_impedance_1_label = message;
+    results_impedance_2_label = message;
+    results_current_label = message;
+    results_target_ratio_label = message;
 }
 
 // calculate new values and update labels
@@ -323,6 +386,8 @@ void calculate() {
     real error;
     real error_low;
     real error_high;
+    real r1;
+    real r2;
     // ensure rails are in the right order
     if (!(top_rail > bottom_rail && mid_rail > bottom_rail && top_rail > mid_rail)) {
         report_input_error("Invalid rail values.");
@@ -331,20 +396,28 @@ void calculate() {
     // calculate target ratio
     real target_ratio = (mid_rail - bottom_rail) / (top_rail - bottom_rail);
     // convert input values to real values
-    real target_impedance = read_resistance(impedance_label);
-    if (impedance == -1.0) {
+    real target_impedance = read_resistance(target_impedance_label);
+    if (target_impedance == -1.0) {
         report_input_error("Invalid impedance value.");
         return;
     }
     // tolerance value on resistors
-    real tolerance = resistor_series_tolerances[resistor_series_selection];
-
+    real tolerance;
+    if (custom_tolerance_selection == 1) {
+        tolerance = custom_tolerance / 100.0;
+    } else {
+        if (tolerance_selection == 0) {
+            tolerance = resistor_series_tolerances[resistor_series_selection];
+        } else {
+            tolerance = tolerance_values[tolerance_selection];
+        }
+    }
     // find resistor values
     if (resistor_series_selection == 0) {
-        if (impedance_selection == 0) {
+        if (target_impedance_selection == 0) {
             r1 = target_impedance * (1.0 - target_ratio);
             r2 = target_impedance - r1;
-        } else if (impedance_selection == 1) {
+        } else if (target_impedance_selection == 1) {
             // target
             // 1/Z = 1/R1+1/R2
             // ratio = R2 / (R1 + R2) -> R1 = R2 * (1 / ratio - 1)
@@ -366,16 +439,17 @@ void calculate() {
                 r2 = resistor_values[r2_index];
                 real trial_ratio = r2 / (r1 + r2);
                 real trial_impedance;
-                if (impedance_selection == 0) {
+                if (target_impedance_selection == 0) {
                     trial_impedance = r1 + r2;
-                } else if (impedance_selection == 1) {
+                } else if (target_impedance_selection == 1) {
                     trial_impedance = 1.0 / (1.0 / r1 + 1.0 / r2);
                 } else {
                     error_out("Unexpected value");
                 }
                 real ratio_error = trial_ratio / target_ratio - 1.0;
                 real impedance_error = trial_impedance / target_impedance - 1.0;
-                real combined_error = abs(ratio_error) + abs(impedance_error) * impedance_importance;
+                real combined_error = ratio_error * ratio_error +
+                    impedance_error * impedance_error * target_impedance_importance;
                 if (combined_error < best_error) {
                     best_r1 = r1;
                     best_r2 = r2;
@@ -388,159 +462,193 @@ void calculate() {
     }
     
     // format labels
-    sprintf(target_ratio_label,
+    sprintf(results_target_ratio_label,
             "Target ratio = %.3f",
             target_ratio);
-    sprintf(target_impedance_label,
-            "Target impedance = %s",
-            format_resistance(target_impedance));
-    sprintf(r1_label, "R1 = %s", format_resistance(r1));
-    sprintf(r2_label, "R2 = %s", format_resistance(r2));
+    sprintf(results_target_impedance_label,
+            "Target impedance = %s\ncalculated as Z = %s",
+            format_resistance(target_impedance),
+            (target_impedance_selection == 0) ? "R1 + R2" : "1/(1/R1+1/R2)");
+    sprintf(results_r1_label, "R1 = %s", format_resistance(r1));
+    sprintf(results_r2_label, "R2 = %s", format_resistance(r2));
     if (tolerance != 0.0) {
-        sprintf(r1_label, "%s +/- %.0f%%", r1_label, tolerance * 100.0);
-        sprintf(r2_label, "%s +/- %.0f%%", r2_label, tolerance * 100.0);
+        sprintf(results_r1_label, "%s +/- %g%%", results_r1_label, tolerance * 100.0);
+        sprintf(results_r2_label, "%s +/- %g%%", results_r2_label, tolerance * 100.0);
     }
-    current = (top_rail - bottom_rail) / (r1 + r2);
-    ratio = r2 / (r1 + r2);
     real r1_low = r1 * (1.0 - tolerance);
     real r1_high = r1 * (1.0 + tolerance);
     real r2_low = r2 * (1.0 - tolerance);
     real r2_high = r2 * (1.0 + tolerance);
+    real ratio = r2 / (r1 + r2);
     real ratio_low = r2 * (1.0 - tolerance) / (r1 * (1.0 + tolerance) + r2 * (1.0 - tolerance));
     real ratio_high = r2 * (1.0 + tolerance) / (r1 * (1.0 - tolerance) + r2 * (1.0 + tolerance));
     real mid_voltage = bottom_rail + ratio * (top_rail - bottom_rail);
-    real voltage_low = bottom_rail + ratio_low * (top_rail - bottom_rail);
-    real voltage_high = bottom_rail + ratio_high * (top_rail - bottom_rail);
-    sprintf(mid_voltage_label, "Voltage = %.3f", mid_voltage);
-    sprintf(ratio_label, "Ratio = %.3f", ratio);
+    real mid_voltage_low = bottom_rail + ratio_low * (top_rail - bottom_rail);
+    real mid_voltage_high = bottom_rail + ratio_high * (top_rail - bottom_rail);
+    real current = (top_rail - bottom_rail) / (r1 + r2);
+    real current_low = (top_rail - bottom_rail) / (r1_high + r2_high);
+    real current_high = (top_rail - bottom_rail) / (r1_low + r2_low);
+    sprintf(results_mid_voltage_label, "Voltage = %.3f", mid_voltage);
+    sprintf(results_ratio_label, "Ratio = %.3f", ratio);
     if (tolerance != 0.0) {
-        sprintf(ratio_label, "%s [%.3f to %.3f]", ratio_label, ratio_low, ratio_high);
-        sprintf(mid_voltage_label, "%s [%.3f to %.3f]", mid_voltage_label, voltage_low, voltage_high);
+        sprintf(results_ratio_label,
+                "%s [%.3f to %.3f]",
+                results_ratio_label,
+                ratio_low,
+                ratio_high);
+        sprintf(results_mid_voltage_label,
+                "%s [%.3f to %.3f]",
+                results_mid_voltage_label,
+                mid_voltage_low,
+                mid_voltage_high);
     }
-    mid_voltage_label += " V";
+    results_mid_voltage_label += " V";
     if (resistor_series_selection != 0) {
         error = mid_voltage - mid_rail;
-        sprintf(mid_voltage_label, "%s\nError = %.2f%%", mid_voltage_label, error * 100.0);
+        sprintf(results_mid_voltage_label,
+                "%s\nError = %.2f%%",
+                results_mid_voltage_label,
+                error * 100.0);
         if (tolerance != 0.0) {
-            error_low = voltage_low - mid_rail;
-            error_high = voltage_high - mid_rail;
-            sprintf(mid_voltage_label,
+            error_low = mid_voltage_low - mid_rail;
+            error_high = mid_voltage_high - mid_rail;
+            sprintf(results_mid_voltage_label,
                     "%s [%.2f%% to %.2f%%]",
-                    mid_voltage_label,
+                    results_mid_voltage_label,
                     error_low * 100.0,
                     error_high * 100.0);
         }
     }
     if (resistor_series_selection != 0) {
         error = ratio / target_ratio - 1.0;
-        sprintf(ratio_label, "%s\nError = %.2f%%", ratio_label, error * 100.0);
+        sprintf(results_ratio_label, "%s\nError = %.2f%%", results_ratio_label, error * 100.0);
         if (tolerance != 0.0) {
             error_low = ratio_low / target_ratio - 1.0;
             error_high = ratio_high / target_ratio - 1.0;
-            sprintf(ratio_label,
+            sprintf(results_ratio_label,
                     "%s [%.2f%% to %.2f%%]",
-                    ratio_label,
+                    results_ratio_label,
                     error_low * 100.0,
                     error_high * 100.0);
         }
     }
     // impedance calculation #1
-    impedance_1 = r1 + r2;
-    sprintf(impedance_1_label,
+    real impedance_1 = r1 + r2;
+    sprintf(results_impedance_1_label,
             "With Z = R1 + R2:\nImpedance = %s",
             format_resistance(impedance_1));
     if (tolerance != 0.0) {
-        sprintf(impedance_1_label,
+        sprintf(results_impedance_1_label,
                 "%s [%s to %s]",
-                impedance_1_label,
+                results_impedance_1_label,
                 format_resistance(impedance_1 * (1.0 - tolerance)),
                 format_resistance(impedance_1 * (1.0 + tolerance)));
     }
-    if (impedance_selection == 0 && tolerance != 0.0) {
-        sprintf(impedance_1_label,
+    if (target_impedance_selection == 0 && tolerance != 0.0) {
+        sprintf(results_impedance_1_label,
                 "%s\nError = %.2f%%",
-                impedance_1_label,
+                results_impedance_1_label,
                 (impedance_1 / target_impedance - 1.0) * 100.0);
         if (tolerance != 0.0) {
             error_low = impedance_1 * (1.0 - tolerance) / target_impedance - 1.0;
             error_high = impedance_1 * (1.0 + tolerance) / target_impedance - 1.0;
-            sprintf(impedance_1_label,
+            sprintf(results_impedance_1_label,
                     "%s [%.2f%% to %.2f%%]",
-                    impedance_1_label,
+                    results_impedance_1_label,
                     error_low * 100.0,
                     error_high * 100.0);
         }
     }
     // impedance calculation #2
-    impedance_2 = 1.0 / (1.0 / r1 + 1.0 / r2);
-    sprintf(impedance_2_label,
+    real impedance_2 = 1.0 / (1.0 / r1 + 1.0 / r2);
+    sprintf(results_impedance_2_label,
             "With Z = 1/(1/R1+1/R2)\nImpedance = %s",
             format_resistance(impedance_2));
     real impedance_2_low = 1.0 / (1.0 / r1_low + 1.0 / r2_low);
     real impedance_2_high = 1.0 / (1.0 / r1_high + 1.0 / r2_high);
     if (tolerance != 0.0) {
-        sprintf(impedance_2_label,
+        sprintf(results_impedance_2_label,
                 "%s [%s to %s]",
-                impedance_2_label,
+                results_impedance_2_label,
                 format_resistance(impedance_2_low),
                 format_resistance(impedance_2_high));
     }
-    if (impedance_selection == 1 && tolerance != 0.0) {
-        sprintf(impedance_2_label,
+    if (target_impedance_selection == 1 && tolerance != 0.0) {
+        sprintf(results_impedance_2_label,
                 "%s\nError = %.2f%%",
-                impedance_2_label,
+                results_impedance_2_label,
                 (impedance_2 / target_impedance - 1.0) * 100.0);
         if (tolerance != 0.0) {
             error_low = impedance_2_low / target_impedance - 1.0;
             error_high = impedance_2_high / target_impedance - 1.0;
-            sprintf(impedance_2_label,
+            sprintf(results_impedance_2_label,
                     "%s [%.2f%% to %.2f%%]",
-                    impedance_2_label,
+                    results_impedance_2_label,
                     error_low * 100.0,
                     error_high * 100.0);
         }
     }
-    /*if (impedance_selection == 1 && resistor_series_selection != 0) {
-        sprintf(impedance_2_label,
-                "%s (%.2f%% error)",
-                impedance_2_label,
-                (impedance_2 / target_impedance - 1.0) * 100.0);
-    }*/
-    sprintf(current_label, "Current draw = %s", format_current(current));
+    sprintf(results_current_label,
+            "Current draw = %s",
+            format_current(current));
 }
 
+// perform calculation
 calculate();
 
+// bring up the main dialog box
 int result = dlgDialog("Find voltage divider resistors") {
     dlgLabel("Change values as needed.  Press \"Perform calculation\" to update results.");
     dlgLabel("");
     dlgHBoxLayout{
+        dlgGroup("Schematic view") {
+            dlgLabel(schematic_label);
+        }
+        dlgLabel("  ");
+        dlgStretch(1);
         dlgVBoxLayout{
             dlgGroup("Voltage values") {
-                dlgHBoxLayout{dlgLabel("Top:"); dlgRealEdit(top_rail);dlgStretch(1);}
-                dlgHBoxLayout{dlgLabel("Mid:"); dlgRealEdit(mid_rail);dlgStretch(1);}
-                dlgHBoxLayout{dlgLabel("Bottom:"); dlgRealEdit(bottom_rail);dlgStretch(1);}
+                dlgHBoxLayout{dlgLabel("Top (V):"); dlgRealEdit(top_rail);dlgStretch(1);}
+                dlgHBoxLayout{dlgLabel("Target mid (V):"); dlgRealEdit(mid_rail);dlgStretch(1);}
+                dlgHBoxLayout{dlgLabel("Bottom (V):"); dlgRealEdit(bottom_rail);dlgStretch(1);}
             }
+            dlgStretch(1);
             dlgGroup("Impedance options") {
                 dlgHBoxLayout{
-                    dlgLabel("Impedance:");
-                    dlgStringEdit(impedance_label);
+                    dlgLabel("Target impedance:");
+                    dlgStringEdit(target_impedance_label);
                     dlgStretch(1);
                 }
-                dlgRadioButton("Calculated as R1 + R2", impedance_selection);
-                dlgRadioButton("Calculated as 1/(1/R1 + 1/R2)", impedance_selection);
+                dlgRadioButton("Calculated as R1 + R2", target_impedance_selection);
+                dlgRadioButton("Calculated as 1/(1/R1 + 1/R2)", target_impedance_selection);
                 dlgHBoxLayout{
                     dlgLabel("Relative importance:");
-                    dlgRealEdit(impedance_importance);
+                    dlgRealEdit(target_impedance_importance);
                     dlgStretch(1);
                 }
             }
-            dlgGroup("Resistor values") {
+            dlgStretch(1);
+                dlgHBoxLayout{
+            dlgGroup("Resistor series") {
                 dlgRadioButton("Exact", resistor_series_selection);
                 dlgRadioButton("EIA E12 (10%)", resistor_series_selection);
                 dlgRadioButton("EIA E24 (5%)", resistor_series_selection);
                 dlgRadioButton("EIA E48 (2%)", resistor_series_selection);
                 dlgRadioButton("EIA E96 (1%)", resistor_series_selection);
+                dlgCheckBox("Include E24 values\nin E48+ series", include_e24_values);
+            }
+            dlgGroup("Tolerance selection") {
+                dlgRadioButton("From series", tolerance_selection);
+                dlgRadioButton("10%", tolerance_selection);
+                dlgRadioButton("5%", tolerance_selection);
+                dlgRadioButton("2%", tolerance_selection);
+                dlgRadioButton("1%", tolerance_selection);
+            dlgStretch(1);
+            dlgHBoxLayout{
+                dlgCheckBox("Custom (%):", custom_tolerance_selection);
+                dlgRealEdit(custom_tolerance);
+                }
+            }
             }
         }
         dlgLabel("  ");
@@ -548,17 +656,17 @@ int result = dlgDialog("Find voltage divider resistors") {
         dlgVBoxLayout{
             dlgStretch(1);
             dlgGroup("Results") {
-                dlgLabel(target_ratio_label, 1);
-                dlgLabel(target_impedance_label, 1);
+                dlgLabel(results_target_ratio_label, 1);
+                dlgLabel(results_target_impedance_label, 1);
                 dlgLabel("");
-                dlgLabel(r1_label, 1);
-                dlgLabel(r2_label, 1);
+                dlgLabel(results_r1_label, 1);
+                dlgLabel(results_r2_label, 1);
                 dlgLabel("");
-                dlgLabel(mid_voltage_label, 1);
-                dlgLabel(ratio_label, 1);
-                dlgLabel(impedance_1_label, 1);
-                dlgLabel(impedance_2_label, 1);
-                dlgLabel(current_label, 1);
+                dlgLabel(results_mid_voltage_label, 1);
+                dlgLabel(results_ratio_label, 1);
+                dlgLabel(results_impedance_1_label, 1);
+                dlgLabel(results_impedance_2_label, 1);
+                dlgLabel(results_current_label, 1);
                 dlgStretch(1);
             }
             dlgHBoxLayout{
